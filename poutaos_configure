@@ -1,0 +1,211 @@
+#!/bin/bash 
+
+# To use an OpenStack cloud you need to authenticate against the Identity
+# service named keystone, which returns a **Token** and **Service Catalog**.
+# The catalog contains the endpoints for all services the user/tenant has
+# access to - such as Compute, Image Service, Identity, Object Storage, Block
+# Storage, and Networking (code-named nova, glance, keystone, swift,
+# cinder, and neutron).
+#
+# *NOTE*: Using the 3 *Identity API* does not necessarily mean any other
+# OpenStack API is version 3. For example, your cloud provider may implement
+# Image API v1.1, Block Storage API v2, and Compute API v2.0. OS_AUTH_URL is
+# only for the Identity API served through keystone.
+
+if [[ $1 == "-h" ||  $1 == "-help" ||  $1 == "--help" ]]
+then
+  echo "This command sets up the s3cmd environment so that you can access your
+  Pouta Object Storage service "
+  echo "The name of the cPouta project to be used can be defined as a command
+  line  argument."
+  echo ""
+  echo "   poutaos_configure  proj_name"
+  echo ""
+  echo "If the name is not defined, the available project names are listed
+  and"
+  echo " you are asked to define the project name"
+  echo ""
+  echo "The program always asks your CSC password before starting the
+  configuration process"
+  echo ""
+  echo "During the configuration, you will be asked to confirm several values
+  and setting"
+  echo "You should accept the default values in all exept the last setep:"
+  echo " WHEN THE TOOL ASKS:"
+  echo '     Save settings? [y/N]' 
+  echo "YOU SHOULD ANSVER: y"
+  exit 0
+fi
+
+#Check that s3cmd and openstack are available
+
+if [[ $(which s3cmd 2>/dev/null | wc -c) -eq 0 ]]
+then 
+  echo "s3cmd command not found!"
+  exit 1
+fi
+
+if [[ $(which openstack 2>/dev/null | wc -c) -eq 0 ]]
+then 
+  echo "openstack command not found!"
+  echo ""
+  echo "Try executing setup command:"
+  echo ""
+  echo "  module load bioconda/3 "
+  echo ""
+  echo "To make openstack available"
+  exit 1
+fi
+
+show_keys=(0)
+
+export OS_PROJECT_NAME="" 
+
+while [[ $# -ge 1 ]]
+do
+  case "$1" in
+             '-show_keys')
+              show_keys=(1)
+             shift
+             ;;
+             *)
+             export OS_PROJECT_NAME=$1 
+             shift                       # No more switches
+             ;;
+    esac
+done
+
+
+export OS_AUTH_URL=https://pouta.csc.fi:5001/v3
+
+# With the addition of Keystone we have standardized on the term **project**
+# as the entity that owns the resources.
+export OS_USER_DOMAIN_NAME="Default"
+if [ -z "$OS_USER_DOMAIN_NAME" ]; then unset OS_USER_DOMAIN_NAME; fi
+
+# unset v2.0 items in case set
+unset OS_TENANT_ID
+unset OS_TENANT_NAME
+
+# In addition to the owning entity (tenant), OpenStack stores the entity
+# performing the action as the **user**.
+export OS_USERNAME=$(whoami)
+
+echo "Please provide your cPouta user name[$OS_USERNAME]:"
+read my_name
+if [[ $my_name != "" ]]
+then
+  export OS_USERNAME=$my_name
+  echo $OS_USERNAME
+fi
+
+# With Keystone you pass the keystone password.
+echo "Please enter your cPouta/Taito password: "
+read -sr OS_PASSWORD_INPUT
+export OS_PASSWORD=$OS_PASSWORD_INPUT
+
+echo "Checking projects available for your account."
+echo "Please wait."
+
+# If your configuration has multiple regions, we set that information here.
+# OS_REGION_NAME is optional and only valid in certain environments.
+# export OS_REGION_NAME="US"
+# Don't leave a blank variable, unset it if it was empty
+if [ -z "$OS_REGION_NAME" ]; then unset OS_REGION_NAME; fi
+
+export OS_INTERFACE=public
+export OS_IDENTITY_API_VERSION=3
+
+#Check that we see something
+num_projects=$(openstack project list -f value 2> /dev/null | wc -l)
+if [[ $num_projects -lt 1 ]]
+then
+  echo ""
+  echo "No cPouta projects found!"
+  echo "Please check that you typed your cPouta password correctly"
+  exit 1
+fi
+
+if [[ $OS_PROJECT_NAME == "" ]]
+then 
+  echo "You have access to following cPouta projects."
+  openstack project list -c Name
+  echo ""
+  echo "Please define the name of the project to be used:"
+  read OS_PROJECT_NAME
+fi  
+
+OS_PROJECT_NAME=$(echo $OS_PROJECT_NAME | tr -d " " )
+
+export OS_PROJECT_ID=$(openstack project show -f value -c id $OS_PROJECT_NAME)
+
+openstack project show  $OS_PROJECT_NAME
+
+ACCESS_KEY=$(openstack ec2 credentials list -f value | grep $OS_PROJECT_ID | tail -1 | awk '{print $1}')
+if [[ $ACCESS_KEY == "" ]]
+then
+  openstack ec2 credentials create
+  ACCESS_KEY=$(openstack ec2 credentials list -f value | grep $OS_PROJECT_ID | tail -1 | awk '{print $1}')
+fi
+
+SECRET_KEY=$(openstack ec2 credentials list -f value | grep $OS_PROJECT_ID | tail -1 | awk '{print $2}')
+
+if [[ $show_keys -eq 1 ]]
+then 
+   echo "Please use following values for your Pouta Object Storage connection"
+   echo ""
+   echo "Server: object.pouta.csc.fi"
+   echo "Port: 443"
+   echo "Tenant ID: $OS_PROJECT_ID" 
+   echo "Access Key: $ACCESS_KEY"
+   echo "Secret Key: $SECRET_KEY"
+   exit 0
+fi
+
+echo "Please define the chunk size for a multipart upload."
+echo "Files bigger than SIZE are automatically uploaded as multithreaded-
+echo "multipart, smaller files are uploaded using the 
+echo "traditional method. SIZE is in Mega-Bytes, default"
+echo "chunk size is 500MB, minimum allowed chunk size is 5MB,"
+echo "maximum is 5000MB."
+echo
+echo "chunk size[500]:"
+read chunk_size
+if [[ $chunk_size == "" ]]
+then
+  chunk_size=500
+fi
+if [[ $chunk_size -gt 5000 ]]
+then
+  echo "ERROR: Chunk size exceeds the maximum 5000 MB"
+  exit 1
+fi
+if [[ $chunk_size -lt 5 ]]
+then
+  echo "ERROR: Chunk size can't be less than 5 MB"
+  exit 1
+fi
+
+
+
+unset OS_PASSWORD_INPUT
+
+echo "---------------------------------------------------------------"
+echo ""
+echo "Starting s3cmd configuration"
+echo ""
+echo "Accept the default values except in for the last step:"
+echo " WHEN THE TOOL ASKS:"
+echo '     Save settings? [y/N]' 
+echo "YOU SHOULD ANSVER: y"
+echo ""
+echo "---------------------------------------------------------------"
+
+
+#s3cmd --configure --access_key=$ACCESS_KEY --secret_key=$SECRET_KEY \
+#--host=object.pouta.csc.fi --signature-v2 --region=US \
+#--multipart-chunk-size-mb=$chunk_size --host-bucket='%(bucket)s.object.pouta.cs#c.fi' -c $HOME/.s3cfg 
+
+s3cmd --configure --access_key=$ACCESS_KEY --secret_key=$SECRET_KEY \
+--host=object.pouta.csc.fi --signature-v2 --multipart-chunk-size-mb=$chunk_size \
+--host-bucket='%(bucket)s.object.pouta.csc.fi' -c $HOME/.s3cfg 

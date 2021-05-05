@@ -1,0 +1,160 @@
+#!/bin/bash
+# A script to fetch datasets from the chipster Pouta Object Storage
+# 6.7. 2018 KM
+
+
+TMPDIR="$TMPDIR"
+bucket="chipster-genomes"
+os_server="a3s.fi"
+
+if [[ $1 == "-h" || $1 == "-help" || $1 == "--help" || $1 == "help" ]]
+then
+cat <<EOF
+
+This tool retrieves genome indexes and other genome related files to 
+from the Chipster web site.
+ 
+If the command is launced without any arguments, it first asks
+for a datatype and then for the species name. 
+
+Data type can alternatively be given as the first argument and
+the species name as the second argument. 
+
+For example the BWA indexes of Danio_rerio.GRCz11 can be retrieced with command:
+
+    chipster_genomes bwa Danio_rerio.GRCz11
+
+EOF
+
+exit
+fi
+
+
+
+if [[ "$1" == "" ]]
+then
+   echo Give a data type name as the first option.
+   echo Available datatypes
+   echo "  bed       BED file"
+   echo "  gtf       GTF file"
+   echo "  fasta     Fasta file"
+   echo "  bowtie    Bowtie index"
+   echo "  bowtie2   Bowtie2 index"
+   echo "  bwa       BWA index"
+   echo "  hisat2    Hisat2 index"
+   echo "  tophat2   TopHat2 index" 
+   echo "-----------------------------"
+   read dtype 
+else
+   dtype=("$1")
+fi
+
+if [[ $dtype == "bed" || $dtype == "gtf" || $dtype == "fasta" || $dtype == "fasta" || $dtype == "bowtie" || $dtype == "bowtie2" || $dtype == "bowtie2"|| $dtype == "bwa" || $dtype == "hisat2" || $dtype == "star" || $dtype == "tophat2" ]]
+then
+  echo "Using datatype: $dtype"
+  echo ""
+else
+  echo "Unknown datatype: $dtype"
+  echo Available datatypes
+   echo "  bed       BED file"
+   echo "  gtf       GTF file"
+   echo "  fasta     Fasta file"
+   echo "  bowtie    Bowtie index"
+   echo "  bowtie2   Bowtie2 index"
+   echo "  bwa       BWA index"
+   echo "  hisat2    Hisat2 index"
+   echo "  tophat2   TopHat2 index"
+   echo "-----------------------------"
+  exit 1
+fi 
+
+if [[ $dtype == "fasta" ]]
+then
+  suff=(".fa.fai")
+fi
+
+if [[ $dtype ==	"bed" ]]
+then  
+  suff=(".bed")
+fi
+
+if [[ $dtype == "bed" ]]
+then
+  suff=(".bed")
+fi
+
+if [[ $dtype == "gtf" ]]
+then
+  suff=(".gtf")
+fi
+
+if [[ $dtype == "bowtie" ]]
+then
+  suff=(".rev.1.ebwt")
+fi
+
+if [[ $dtype == "bowtie2" ]]
+then
+  suff=(".rev.1.bt2")
+fi
+
+
+if [[ $dtype == "bwa" ]]
+then
+  suff=(".bwt")
+fi
+
+if [[ $dtype == "hisat2" ]]
+then
+  suff=(".1.ht2")
+fi
+
+if [[ $dtype == "tophat2" ]]
+then
+  suff=(".fa.tlst")
+fi
+
+
+
+if [[ $2 == "" ]]
+then
+  echo ""
+  echo Available species for $dtype:
+  echo ""
+
+  echo "curl -s https://${bucket}.${os_server} | xtract -pattern Contents -element Key "
+  for a in $(curl -s https://${bucket}.${os_server} | xtract -pattern Contents -element Key | grep "${dtype}/" | awk -F "/" '{print $NF}' | grep "${suff}$"); 
+  do 
+     basename $a $suff 
+  done
+  echo ""
+  echo "Define species name (pick one from the list above)"
+  read species
+else
+  species=$2
+fi
+
+test_count=$(curl -s https://${bucket}.${os_server}  | xtract -pattern Contents -element Key | grep "${dtype}/" | grep -c "${species}${suff}" ) 
+echo test_count $test_count
+if [[ $test_count -ne 1 ]]
+then
+   echo "Species definition $species does not define uniq species."
+   exit 1
+fi
+
+
+
+for a in $(curl -s https://${bucket}.${os_server}  | xtract -pattern Contents -element Key | grep "${dtype}/" | grep "${species}")
+do 
+  echo Downloading $a
+  wget https://${bucket}.${os_server}/$a
+done
+
+
+message="chipster_genomes ${dtype} ${species}"
+printf '{"version": "1.1", "host": "%s", "short_message": "utility log", "full_message": "%s", "level": 6, "_user": "%d"}' $(hostname) "$message" $(id -u) > /dev/udp/195.148.30.172/12201
+
+#echo "$(date) $(whoami) $species $dtype" >> /appl/bio/share/chipster_genomes_log.log
+
+exit
+

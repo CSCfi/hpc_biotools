@@ -1,0 +1,180 @@
+#!/bin/bash 
+
+gid=$(pwd | awk -F "/" '{print $3}' | awk -F "_" '{print $2}')
+if [[ $(groups | grep -w -c $gid) -ne 1 ]]; then
+      echo ""
+      echo "ERROR: Project $2 not found."
+      exit 1
+fi    
+
+
+if [ $# -lt 2 ];
+then
+    echo "Usage: " 
+    echo " freebayes-puhti -regions regions_file -f ref.fa aln.bam -out utfile.vcf -other-freebayes options"
+    echo
+    echo "This command runs freebayes as an array job in Puhti cluster."
+    echo "The computing task is split into sub-jobs based on a regionsfile"
+    echo "that needs to be gemerated before executing this tool."
+    echo ""
+    echo "The results of the sub-jobs are merged and sorted into one VCF file.  Flags to freebayes"
+    echo "which would write to e.g. a particular file will obviously cause problms, so caution is"
+    echo "encouraged when using this script."
+    echo
+    echo "Please use option -out to define the output in stead of redirecting the outout with > sign."
+    echo
+    echo "examples:"
+    echo
+    echo "First, create a regions file with fasta_generate_regions.py command"
+    echo "    fasta_generate_regions.py ref.fa.fai 100000 > regions.txt"
+    echo ""
+    echo "Then launch your freebayes job using freebayes-puhti:"
+    echo ""
+    echo "    freebayes-puhti -regions regions.txt -f ref.fa aln.bam -out out.vcf"
+    echo
+    exit
+fi
+
+
+freebayes_bin=$(which freebayes 2>/dev/null )
+if [[ $freebayes_bin == "" ]]
+then
+  echo "freebayes command was not found!"
+  echo "Please make sure that freebayes is in your command path."
+  exit 1
+else
+  echo "Using freebayes version:"
+  freebayes --version
+  echo ""
+  echo "Installed in:"
+  echo  $freebayes_bin
+  echo
+fi
+
+vcffirstheader_bin=$(which vcffirstheader 2>/dev/null)
+if [[ $vcffirstheader_bin == "" ]]
+then
+  echo "vcffirstheader command was not found!"
+  echo "Please make sure that vcffirstheader is in your command path."
+  exit 1
+fi
+
+
+vcfstreamsort_bin=$(which  vcfstreamsort 2>/dev/null)
+if [[ $vcfstreamsort_bin == "" ]]
+then
+  echo "vcfstreamsort  command was not found!"
+  echo "Please make sure that vcfstreamsort  is in your command path."
+  exit 1
+fi
+
+vcfuniq_bin=$(which  vcfuniq 2>/dev/null)
+if [[ $vcfuniq_bin == "" ]]
+then
+  echo "vcfuniq command was not found!"
+  echo "Please make sure that vcfuniq is in your command path."
+  exit 1
+fi
+
+dalku=$(date)
+alkoi=$(date +%s)
+command="$freebayes_bin"
+fb_output="array_freebayes_$$_ouput.vcf"
+regionsfile=""
+
+while [[ $# -ge 1 ]]
+do
+  case "$1" in
+
+             '-regions')
+             regionsfile=($2)
+             if [[ ! -e $regionsfile ]] 
+             then
+                  echo ""
+                  echo "Regions file: $regionsfile does not exist"
+                  echo ""
+                  echo "-----------------------------------------------------------"
+                  exit 1
+             fi
+             shift
+             shift
+             ;;
+              '-out')                   
+               # result file
+                  fb_output=($2)
+                  outputflag=1
+                  if [[ -e $fb_output ]] 
+                  then                        
+                      echo " "
+                      echo "Output file: $fb_output already exists."
+                      echo ""
+                      exit 1                      
+                  fi
+                  shift
+                  shift 
+                ;; 
+                *)
+                   command="$command $1"
+                shift                       # No more switches
+                ;;
+    esac
+done
+
+tempdir="freebayes_$$_tmp"
+mkdir $tempdir
+
+if [[ $regionsfile == "" ]]
+then
+  echo "Regions file not defined!"
+  echo "Please use option: -regions to define the regions file"
+  exit 1
+fi
+
+nregions=$(cat $regionsfile | wc -l )
+echo ""
+echo "Regions file $regionsfile contains $nregions regions"
+
+
+echo ""
+echo "Running command:"
+echo "  $command --region region "
+echo "For each region"
+
+i=1
+for region in $(cat $regionsfile)
+do  
+   echo "echo \"$region\" > $tempdir/region_$i.tmp; $command --region $region >> $tempdir/out_"'${SLURM_ARRAY_TASK_ID}'".vcf ; rm -f $tempdir/region_$i.tmp" >>  freebayes_command_list_$$.tmp
+   (( i = i +1 ))
+done 
+
+#
+sbatch_commandlist -commands freebayes_command_list_$$.tmp -t 48:00:00 -mem 16000  -project project_${gid}
+
+echo "Postprocessing results"
+echo "This may take some time"
+
+cat $tempdir/out_*.vcf | vcffirstheader | vcfstreamsort -w 1000 | vcfuniq > $fb_output
+ongelmat=$(ls $tempdir/region_$i.tmp 2> /dev/null | wc -l)
+if [[ $ongelmat -ne 0 ]]
+then
+  echo "Freebayes failed for some of the regions"
+  echo "The failed regions as listed in file: failed_regions_$$.txt"
+  cat $tempdir/region_*.tmp >  failed_regions_$$.txt
+fi
+
+rm -rf $tempdir
+rm -f freebayes_command_list_$$.tmp
+dloppu=$(date)
+loppui=$(date +%s)
+(( kesto = loppui - alkoi ))
+
+echo "Array_freebayes job is ready"
+echo "The process took $kesto seconds"
+printf '%dh:%dm:%ds\n' $(($kesto/3600)) $(($kesto%3600/60)) $(($kesto%60))
+echo "The results have been written to file: $fb_output"
+
+#send log message
+message="$0 $dalku $dloppu $kesto"
+printf '{"version": "1.1", "host": "%s", "short_message": "utility log", "full_message": "%s", "level": 6, "_u$
+
+exit 0
