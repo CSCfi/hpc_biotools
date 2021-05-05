@@ -1,0 +1,11 @@
+#!/bin/bash
+R1=$1                     # input file 1
+R2=$2                     # input file 2
+Out=$3                    # result file
+result_key=$4             # ecryption key for results
+genome="/appl/opt/bowtie2/reference_genome"
+sk=/appl/opt/data-key.sec # input decryption key
+
+bowtie2 -x $genome -1 <(crypt4gh decrypt --sk $sk < $r1 )\
+ -2 <(crypt4gh decrypt --sk $sk < $r2 ) |\
+ crypt4gh encrypt --recipient_pk $result_key  > $out
