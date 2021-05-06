@@ -1,7 +1,7 @@
 #!/bin/bash
-R1=$1                     # input file 1
-R2=$2                     # input file 2
-Out=$3                    # result file
+r1=$1                     # input file 1
+r2=$2                     # input file 2
+out=$3                    # result file
 result_key=$4             # ecryption key for results
 genome=$REF_GENOME
 sk=/opt/keys/bowtie2_data_key.sec # input decryption key
