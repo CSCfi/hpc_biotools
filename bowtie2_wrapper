@@ -7,5 +7,5 @@ genome=$REF_GENOME
 sk=/opt/keys/bowtie2_data_key.sec # input decryption key
 
 bowtie2 -x $genome -1 <(crypt4gh decrypt --sk $sk < $r1 )\
- -2 <(crypt4gh decrypt --sk $sk < $r2 ) --un-conc ${1}_filered -|\
+ -2 <(crypt4gh decrypt --sk $sk < $r2 ) --un-conc ${1}_filered |\
  crypt4gh encrypt --recipient_pk $result_key  > $out
