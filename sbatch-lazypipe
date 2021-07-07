@@ -1,0 +1,301 @@
+#!/bin/bash
+
+command=""
+extra_args=""
+gpu_num=0
+gpu_max=4
+gpu_res=""
+max_int_jobs=1
+mem_max=128000
+mem=32000
+nvme_max=160
+nvme=0
+time="24:00:00"
+partition="X"
+jobname="interactive"
+threads=8
+user=$(whoami)
+project_id="X"
+read1="X"
+
+interactive_mode=1
+if [[ -n "${CSC_PRIMARY_PROJECT}" ]]; then
+    project_id=${CSC_PRIMARY_PROJECT}
+fi
+
+
+#gid=$(pwd | awk -F "/" '{print $3}' | '{print $2}')
+print_help=0
+
+#read the command line arguments
+while [[ $# -ge 1 ]]
+do
+  case "$1" in
+          
+          '--mem' | '-m')
+            mem=($2)
+            if [[ ${mem:(-1)} == "G" ]]; then
+                value=${mem::-1}
+                (( mem = value * 1024 ))
+            fi
+            if [[ ${mem:(-1)} == "M" ]]; then
+                 value=${mem::-1}
+                 mem=$value
+            fi
+            shift 
+            shift 
+          ;; 
+          '-t' | '--time' )
+            time=($2)
+            shift 
+            shift 
+          ;;
+          '--account' | '-A' )
+            project_id=($2)
+            shift
+            shift
+          ;;
+          '--job-name' | '-j')
+            jobname=($2)
+            shift 
+            shift 
+          ;; 
+          '--cores' | '-c' | '--numth')
+            threads=($2)
+            if [[ $threads -gt 40 ]]; then
+               echo "sinteractive can request in maximum 40 cores/threads"
+               exit 1
+            fi
+            shift 2            
+          ;;
+          '--tmp' | '-d' )
+          nvme=$2           
+          shift   
+          shift
+          ;;
+          '--partition' | '-p')
+          partition=$2
+          shift
+          shift
+          ;;
+          '--read1' | '-1' )
+          read1=$2
+          if [[ -e "$read1" ]]; then
+             command="$command --read1 $read1 "
+          else
+             echo "Read file $read1 not found."
+             exit 1
+          fi
+          shift
+          shift
+          ;;
+          '--hostgen')
+          hostgen=$2
+          if [[	-e "$hostgen" ]]; then
+       	     command="$command --hostgen $hostgen "
+       	  else
+      	     echo "Hostgen file $hostgen not found."
+       	     exit 1 
+       	  fi
+          shift
+          shift
+          ;;
+          '-h' | '--help' | '-help')
+          print_help=(1)
+          shift
+          ;;
+          *)
+             command="$command $1"
+             shift
+          ;;
+  esac
+done
+
+if [[ "$read1" == "X" ]]; then 
+   print_help=1
+fi
+
+
+#user help
+if [[ print_help -eq 1 ]]; then
+cat <<EOF
+
+sbatch-lazypipe
+
+Lazypipe is a pipeline for identifying viruses in host-associated or 
+environmental samples. The pipeline is described in
+ https://www.helsinki.fi/en/projects/lazypipe
+
+sbatch-lazypipe is a help tool to submit lazypipe jobs in Puhti.
+It automatically generates a batch job file and submits it to batch 
+job system of Puhti. The command uses the same command line options 
+as the pipeline.pl command of Lazypipe. In addition sbatch-lazypipe 
+asks user to define batch job resources 
+(account, runtime, memory, number of cores).
+
+Syntax:
+
+   sbatch-lazypipe <options>
+
+sbatch-lazypipe sepecific options:
+  -t, --time       SLURM run time reservation in format hh:mm:ss. 
+                   Default: $time
+  -m, --mem        SLURM memory reservation in MB. Default: $mem
+  -j, --jobname    SLURM job name. Default: $jobname
+  -c, --cores      SLURM num-cpus. Default: 1
+  -A, --account    SLURM Accounting project. Default: \$CSC_PRIMARY_PROJECT.
+  -d, --tmp        Size of job specifinc /tmp or \$LOCAL_SCRATCH disk (in GB). 
+                   Default $nvme
+
+Lazypipe pipeline options:
+EOF
+pipeline.pl
+
+exit 0
+fi
+
+#bash -l is the default command
+if [[ $command == "" ]]; then
+   command="bash -l"
+fi
+
+##try to guess project if not otherwise defined
+#if [[ $project_id == "X" ]]; then
+#      project_id=$(pwd | grep scratch | awk -F "/" '{print $3}')
+#fi
+
+#check that project exist
+if [[ $(groups | grep -w -c $project_id 2> /dev/null ) -ne 1 ]]; then
+   #active_groups=()
+   active_groups_names=()
+   for g in $(groups) 
+   do 
+     if [[ -d "/scratch/${g}" && ! -h "/scratch/${g}" ]]; then 
+         #active_groups+=(${g})
+         title=$(csc-projects -p ${g} -o T)
+         active_groups_names+=("${g} ${title}")
+     fi
+   done
+   if [[ $project_id != "X" ]]; then
+       echo "Accounting project $project_id not found."
+   fi
+   echo
+   echo "Define project with option: -A or --account"
+   if [[ ${#active_groups_names[@]} -gt 0 ]]; then
+           echo "or choose a project by giving an item number from the list below: "
+           echo ""
+           select project_select in "${active_groups_names[@]}" "Quit"; do
+               [[ -n "$project_select" ]] && break
+           done
+   fi 
+   if [[ $project_select == "Quit"  ]];then
+      exit 0
+   else
+     project_id=$(echo $project_select | awk '{print $1}')
+   fi  
+fi
+
+
+#
+if [[ $interactive_mode -eq 1 ]]; then
+   echo "Give time reservation in format hours:minutes:seconds [${time}]"
+   read input
+   if [[ $input != "" ]]; then 
+    time=${input//" "/""}
+   fi
+
+   echo "Give memory reservation in Megabytes(M) or Gigabytes(G) [${mem}]M"
+   read input
+   if [[ $input != "" ]]; then 
+     mem=${input//" "/""}
+     if [[ ${mem:(-1)} == "G" ]]; then
+       value=${mem::-1}
+      (( mem = value * 1024 ))
+     fi
+     if [[ ${mem:(-1)} == "M" ]]; then
+       value=${mem::-1}
+       mem=$value
+     fi
+   fi
+   echo "Give number of computing cores you want to use [${threads}]"
+   read input
+   if [[ $input != "" ]]; then 
+    threads=${input//" "/""}
+   fi
+   
+fi
+
+ 
+  
+
+if [[ $partition == "X" ]]; then
+       hours=$( echo $time | awk -F : '{print  $1}')
+       if [[ $hours -le 72 ]]; then
+          partition="small"     
+       else
+          partition="longrun"
+       fi
+fi
+
+echo ""
+echo "Batch job runnig lazypipe will be submitted"
+echo "Requested resources:"
+echo "  Maximum run time (hours:min:sec): $time"
+echo "  Maximum memory (MB): $mem "
+echo "  \$TMPDIR size (GB): $nvme "
+echo "  Number of cores/threads: $threads "
+echo "  Accounting project: $project_id"
+echo "  Partition: $partition"
+echo " "
+echo "Note that it may take some some time before your job gets the requested resources and start."
+echo "Do you want to get e-mail, when the lazypipe process finshes[y/n]?"
+read ans
+if [[ $ans == "y" || $ans == "yes" ]]; then
+     echo "Please give your email address:"
+     read email
+fi  
+
+#echo "srun --ntasks=1 --time=$time --mem=$mem --account=$project_id --partition=$partition --cpus-per-task=$threads  --gres=nvme:$nvme,$gpu_res --x11=first --pty $email_def $command"
+login_time=$(date)
+
+#Define $WRKDIR
+#cp /appl/soft/bio/lazypipe/lazypipe/pipeline.default.config ./pipeline.my.config
+#echo "WRKDIR = $(pwd) " >> pipeline.my.config
+
+echo "#!/bin/bash -l" > lazypipe_batchjob_$$.sh
+echo "#SBATCH --job-name=lazypipe" >> lazypipe_batchjob_$$.sh
+echo "#SBATCH --account=$project_id" >> lazypipe_batchjob_$$.sh 
+echo "#SBATCH --time=$time" >> lazypipe_batchjob_$$.sh
+echo "#SBATCH --mem=$mem" >> lazypipe_batchjob_$$.sh
+echo "#SBATCH --cpus-per-task=$threads"  >> lazypipe_batchjob_$$.sh
+echo "#SBATCH --partition=$partition" >> lazypipe_batchjob_$$.sh
+echo "#SBATCH --output=lazypipe_%j.out" >> lazypipe_batchjob_$$.sh
+echo "#SBATCH --error=lazypipe_%j.out" >> lazypipe_batchjob_$$.sh
+if [[ $email != "" ]];then
+  echo "#SBATCH --mail-type=END"   >> lazypipe_batchjob_$$.sh
+  echo "#SBATCH --mail-user=$email"  >> lazypipe_batchjob_$$.sh
+fi
+echo "module load r-env-deprecated "  >> lazypipe_batchjob_$$.sh
+echo "echo TMPDIR=$(pwd)"' > .Renviron ' >> lazypipe_batchjob_$$.sh
+echo "module load biokit " >> lazypipe_batchjob_$$.sh
+echo "module load biopythontools" >> lazypipe_batchjob_$$.sh
+echo "module load lazypipe" >> lazypipe_batchjob_$$.sh
+echo "mkdir lazypipe_tmp_$$"  >> lazypipe_batchjob_$$.sh
+echo "cp /appl/soft/bio/lazypipe/1.2/lazypipe/pipeline.default.config pipeline.my.config"  >> lazypipe_batchjob_$$.sh
+echo "echo WRKDIR = "'$(pwd)'"/lazypipe_tmp_$$"' >> pipeline.my.config' >> lazypipe_batchjob_$$.sh
+
+echo "srun /appl/soft/bio/lazypipe/1.2/lazypipe/bin/pipeline.pl $command --numth $threads " >> lazypipe_batchjob_$$.sh
+echo "rm -rf lazypipe_tmp_$$" >> lazypipe_batchjob_$$.sh
+
+jobid=$(sbatch lazypipe_batchjob_$$.sh | grep "Submitted" | awk '{print $NF}')
+
+echo "Your Lazypipe job has been submitted to the batch job system."
+echo "Job ID: $jobid"
+echo "You can monitor the progress of your job with command:"
+echo "     sacct -j $jobid"
+
+message="lazypipe $login_time $exit_time mem: $mem threads: $threads"
+printf '{"version": "1.1", "host": "%s", "short_message": "utility log", "full_message": "%s", "level": 6, "_user": "%d"}' $(hostname) "$message" $(id -u) > /dev/udp/195.148.30.172/12201
+
+
+exit 0 

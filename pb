@@ -920,7 +920,7 @@ cd ${pbtmproot}/pb_"$$"_tmpdir/
 (( mem_request = db_koko / 699051 ))
 
 #2.10.0 versiossa näyttäisi olevan pieni kokovaatimus
-((  mem_request = mem_request / 2 ))
+#((  mem_request = mem_request / 2 ))
 
 if [[ $mem_request -lt $mem_limit ]] 
 then
@@ -942,7 +942,7 @@ if [[ $blast_type == "blast_formatter" ]]
 then
   num_of_cores_to_use=(1)
 else
-  num_of_cores_to_use=(4)
+  num_of_cores_to_use=(8)
 fi
 
 (( mem_request = mem_request / num_of_cores_to_use ))
@@ -985,7 +985,7 @@ then
     echo $command '-archive $nimi -out $nimi.result' >> $pbtmproot/pb_"$$"_tmpdir/pb_batch.sh
 
 else
-    echo $command '-num_threads $SLURM_CPUS_PER_TASK -query $nimi -db' $blast_database '-out $nimi.result.tmp' >> $pbtmproot/pb_"$$"_tmpdir/pb_batch.sh
+    echo srun $command '-num_threads $SLURM_CPUS_PER_TASK -query $nimi -db' $blast_database '-out $nimi.result.tmp' >> $pbtmproot/pb_"$$"_tmpdir/pb_batch.sh
     echo 'mv $nimi.result.tmp $nimi.result'  >> $pbtmproot/pb_"$$"_tmpdir/pb_batch.sh
     echo 'rm -f $nimi' >> $pbtmproot/pb_"$$"_tmpdir/pb_batch.sh
 fi 

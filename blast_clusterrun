@@ -1,0 +1,314 @@
+#!/bin/bash 
+# blast_clusterrun ohjelma Taito-palvelimelle
+# K.M. 21.7. 2015
+#
+pblogfile=("/appl/bio/blast/pb_blast_log")
+gid=$(pwd | awk -F "/" '{print $3}' | awk -F "_" '{print $2}')
+
+pname=$(pwd | awk -F "/" '{print $3}')
+#echo "GID: $gid"
+pbtmproot=("/scratch/$pname")
+user=$(whoami)
+
+#Tarkista input, output ja tietokanta
+inputflag=(0)
+outputflag=(0)
+mode=("interactive")
+debug=(0)
+pb_id=(0)
+
+
+#read the command line arguments
+while [[ $# -ge 1 ]]
+do
+  case "$1" in
+        '-jobid')
+          # jobid
+          pb_id=($2)
+          atmpdir=($pbtmproot"/pb_"$pb_id"_tmpdir")
+          if [[ ! -e $atmpdir ]]
+          then
+                echo ""
+                echo " pb job file $atmpdir not found!"
+                echo ""
+                echo "-----------------------------------------------------------"
+                pb_id=0
+          fi
+          shift 
+          shift 
+          ;;       
+          *)
+          echo "Plase use -jobid option to define the Job ID."
+          exit 1
+          ;;
+  esac
+done
+
+
+if [[ $pb_id == 0 ]] 
+then
+  echo ""
+  echo "Please define the the job ID number number of your pb blast job"
+  echo "with option -jobid"
+  echo " "
+  echo "For example:" $pbtmproot/pb_${pb_id}_tmpdir/
+  echo "   blast_clusterrun -jobid 12345"
+  echo ""
+  echo "The job ID number can be checked from the directory name"
+  echo "Following grid blast jobdirectories exists:"
+  echo ""
+  ls -ltrd $pbtmproot/pb_*_tmpdir
+  echo ""
+  exit 1 
+fi
+
+
+#check the job configuration_
+if [[ -e $pbtmproot/pb_"$pb_id"_tmpdir/pb_blast.conf ]] 
+then
+  source $pbtmproot/pb_"$pb_id"_tmpdir/pb_blast.conf
+fi
+
+
+
+#############
+#Tyon lahetys
+##############
+cd  $pbtmproot/pb_"$pb_id"_tmpdir
+
+if [[ $mode == "no_slurm" ]] 
+then
+ echo "Interactive mode"
+
+else 
+ echo $jobid
+ n_done=(0)
+ n_failed=(0)
+ n_finished=(0)
+ n_running=(0)
+ n_waiting=(0)
+ i=(0)
+ 
+ if [[ $mode == "batch" ]] 
+ then
+   echo "------------------------------------------------------"
+   echo "BLAST job has been submitted to the batch job system"
+   echo "The ID of the job is: $jobid"
+   echo ""
+   echo "You can follow the progress of your job with command:"
+   echo "   squeue -l -j $jobid  "
+   echo ""
+   echo "The results of the BLAST run will be found in directory:"
+   echo "   $pbtmproot/pb_${pb_id}_tmpdir"
+   echo "------------------------------------------------------"
+   exit 0
+ fi
+
+ while [[ $n_finished -lt $n_split ]]
+ do
+    prew_running=($n_running)
+    prew_waiting=($n_waiting)
+    prew_done=($n_done)
+  
+    n_running=$(scontrol show jobs $jobid | grep JobState | grep RUNNING | wc -l )
+    n_done=$(scontrol show jobs $jobid | grep JobState | grep COMPLETED | wc -l )
+    n_waiting=$(scontrol show jobs $jobid | grep JobState | grep PENDING | wc -l )
+    info_waiting=$(scontrol show jobs $jobid | head -1 | awk '{print $3}' | awk -F "=" '{print $2}' | grep "-" )
+    n_failed=$(scontrol show jobs $jobid | grep JobState | grep FAILED | wc -l )
+
+    (( n_finished =  n_split - n_waiting - n_running ))
+    change=(0)
+      if [[ $prew_running != $n_running ]]
+      then 
+        change=(1)
+      fi
+      if [[ $prew_waiting != $n_waiting ]] 
+      then 
+        change=(1)
+      fi
+      if [[ $change == 1 ]] 
+      then  
+          if [[ $i -gt 0 ]] 
+          then
+            echo ""
+          fi  
+          aika=$(date +%H:%M:%S)
+          if [[ $(echo $info_waiting | wc -c) -gt 3 ]]
+          then
+              j_waiting=$(echo $info_waiting | awk -F "-" '{ a = $2 - $1 + 1 }{print a}') 
+              (( j_done = n_split - n_running - n_failed - j_waiting ))
+              printf "$aika Jobs: done $j_done, running $n_running, waiting $j_waiting, failed $n_failed\n"
+          else
+              printf "$aika Jobs: done $n_finished, running $n_running, waiting $n_waiting, failed $n_failed\n"
+          fi
+      else 
+        if [[ $i -lt 80 ]] 
+        then
+         printf "%s" .
+         (( i = i + 1 ))
+       else 
+         printf "%s\n" .
+         i=(0)
+        fi 
+     fi 
+   sleep 15
+ done
+fi
+
+cd $location
+
+#Kootaan lopputulokset
+
+#Jos käytetään arkistoformaattia, tulostiedostoja ei suoraan voida yhdistää.
+if [[ $pb_output_type == 11 ]] 
+then
+    cd $pbtmproot/pb_${pb_id}_tmpdir/
+    tar cf $blast_output.tar pb_chunk_*.result
+    if [[ $dbbuildflag -eq 2 || $dbbuildflag -eq 1 ]] 
+    then
+       tar -rf $blast_output.tar  pb*blast_database.tmp*
+    fi
+    mv $blast_output.tar $location/
+    cd $location
+    blast_output=("$blast_output.tar")
+else 
+    if [[ $blast_type == "blast_formatter" ]]
+    then 
+       cat $pbtmproot/pb_${pb_id}_tmpdir/pb_chunk_*.result.result > $blast_output
+    else
+       if [[ $pb_output_type -eq 14 || $pb_output_type -eq 13 ]]
+       then
+           if [[ $pb_output_type -eq 14 ]]
+           then
+               i=1
+               for file in $(ls  $pbtmproot/pb_${pb_id}_tmpdir/pb_chunk_*.xml)
+               do 
+                 cp $file ${blast_output}_${i}.xml; 
+                 ((i++))
+               done         
+           fi
+           if [[ $pb_output_type -eq 13 ]]
+           then
+               i=1
+               for file in $(ls  $pbtmproot/pb_${pb_id}_tmpdir/pb_chunk_*.json)
+               do 
+                 cp $file ${blast_output}_${i}.json; 
+                 ((i++))
+               done         
+           fi
+       else
+         cat $pbtmproot/pb_${pb_id}_tmpdir/pb_chunk_*.result > $blast_output
+       fi
+    fi
+fi
+
+
+# Nimilista: poistetaan päällekäisyydet
+if [[ $pb_output_type -eq 19 || $pb_output_type -eq 20 ]] 
+then
+  sort $blast_output | uniq > "$blast_output"_${pb_id}.tmp
+  rm -f $blast_output
+  mv "$blast_output"_${pb_id}.tmp $blast_output
+  numhits=$(cat $blast_output | wc -l )
+fi
+
+# Haetaan sekvenssit
+if [[ $pb_output_type -eq 20 ]] 
+then
+  if [[ $numhits -gt 0 ]] 
+  then
+    blastdbcmd -db $blast_database -entry_batch $blast_output -out $blast_output.seq
+    rm -f $blast_output
+    seqret $blast_output.seq $blast_output
+    rm -f $blast_output.seq
+  fi
+fi
+
+# Muokataan taulukko fasta-tiedostoksi
+if [[ $pb_output_type -eq 21 ]] 
+then 
+  numhits=$(cat $blast_output | wc -l )
+  if [[ $numhits -gt 0 ]] 
+  then
+     # aukkojen erilaisuuden takia listassa saatta olla vielä päällekäisyyttä
+          sort $blast_output | awk '{print $4"\t"$1"\t"$2"\t"$3}' | uniq -f 1 | awk -F "\t" '{print ">"$2"_"$3"-"$4 }{print $1}' | degapseq -filter > "$blast_output"_"${pb_id}".seq
+     rm -f $blast_output
+     mv "$blast_output"_"${pb_id}".seq $blast_output
+  fi
+fi
+
+# Muokataan taulukkoa ja lisätään otsikkorivi
+if [[ $pb_output_type -eq 23 ]] 
+then 
+  numhits=$(cat $blast_output | wc -l )
+  if [[ $numhits -gt 0 ]] 
+  then 
+     echo "query id\tsubject id\t% identity\talignment length\tmismatches\tgap opens\tq start\tq. end\ts. start\ts. end\te-value\tbit score\ts.description" >"$blast_output"_${pb_id}.table
+     cat $blast_output >> "$blast_output"_${pb_id}.table
+     rm -f $blast_output
+     mv "$blast_output"_${pb_id}.table $blast_output
+  fi 
+fi 
+
+if [[ $outputflag -eq 0 ]] 
+then  
+  cat $blast_output
+  rm -f $blast_output
+fi
+
+if [[ $outputflag -eq 1 ]] 
+then  
+   aika=$(date +%H:%M:%S)
+   printf "$aika Job completed. Results are written to file: $blast_output\n"
+fi
+
+
+if [[ $dbbuildflag -ne 0 ]] 
+then
+   export BLASTDB=$blastdb_orig
+fi
+
+cat $pbtmproot/pb_${pb_id}_tmpdir/pb_blast_err* > $pbtmproot/pb_${pb_id}_tmpdir/pb_errors
+#grep "Duration:" $pbtmproot/pb_${pb_id}_tmpdir/pb_blast_out* > subjobtimes_${pb_id}
+
+if [[ -e  $pbtmproot/pb_${pb_id}_tmpdir/pb_errors ]] 
+then 
+  cat $pbtmproot/pb_${pb_id}_tmpdir/pb_errors
+fi 
+
+#Kun tyÃ¶ oon valmis fasta-tiedosto poistetaan. 
+#Jos fastoja on jÃ¤ljellÃ¤ osa tÃ¶istÃ¤ on kesken
+rem_fasta=$(ls  $pbtmproot/pb_${pb_id}_tmpdir/pb_chunk*.fasta 2> /dev/null | wc -l)
+if [[ $rem_fasta -gt 0 ]]
+then
+   echo "All subjobs did not finish succesfully"
+   echo "Unfinished sequeces collected in $blast_output_missing.fasta"
+   cat $pbtmproot/pb_${pb_id}_tmpdir/pb_chunk*.fasta > $blast_output_missing.fasta
+fi
+
+
+
+ 
+if [[ $ensemblflag == 1 ]] 
+then 
+   rm -rf $blast_database_name
+fi
+
+rm -rf $pbtmproot/pb_${pb_id}_tmpdir 
+#rm -f pb_blast_job_tmp_${pb_id}* 
+end_time=$(date)
+
+if [[ $ensemblflag == 1 ]] 
+then
+    blast_database=($blast_database_name)
+    rm -rf $blast_database_name
+fi
+
+message="pb_blast $start_time $end_time $blast_database $r"
+printf '{"version": "1.1", "host": "%s", "short_message": "utility log", "full_message": "%s", "level": 6, "_user": "%d"}' $(hostname) "$message" $(id -u) > /dev/udp/195.148.30.172/12201
+
+#echo $user $start_time $end_time $blast_database $r >> $pblogfile
+
+
+exit 0
+
